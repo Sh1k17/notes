@@ -494,3 +494,221 @@ $$
 
 答：1.门控机制允许网络在不同的输入条件下动态地调节信息流。通过引入一个门控分支，模型可以“选择性”地保留或抑制某些特征。例如，在 GLU 或其变体（如 SwiGLU）中，这种设计使得模型在处理复杂输入时能够更加灵活，适应不同场景和特征分布，从而提升表达能力。2.门控激活函数不仅仅引入了非线性变换，还增加了参数化的门控分支，这一分支可以看作是一种自适应的特征选择机制。与单一的激活函数（如 ReLU 或 GELU）相比，这种机制能捕捉到更细粒度的非线性关系，使得模型能够建模更复杂的函数映射。3.在深层网络中，梯度消失或梯度爆炸的问题常常限制模型的训练。门控机制通过引入额外的线性通道（即使在负区域也能传递部分信息），可以在一定程度上缓解这些问题。4.现代大型模型（如 LLM）往往需要在有限的参数量下表达非常复杂的模式。门控机制允许模型以较少的参数实现更复杂的功能，因为门控分支可以根据不同输入动态地调节信息流，从而实现类似“专家选择”的效果。这种机制能够在保证灵活性的同时，提高参数的利用效率。当然Google原论文将这个答案归咎为玄学。
 
+## 3.位置编码
+
+### 3.1公式
+
+$$
+x=[x_0,x_1,x_2,x_3,...x_{d-2},x_{d-1}]
+$$
+
+$$
+u_k = x_{2k} + i\,x_{2k+1}\quad (k=0,\dots,\tfrac d2-1).
+$$
+
+本质上就是 寻找一个满足一个方程的解：$<f_q(x_m,m),f_k(x_n,n)>=g(x_m,x_n,m-n)$。
+
+rope提出了以下可行解：
+$$
+f_q(x_m,m)=(W_qx_m)e^{im\theta}
+$$
+
+$$
+f_k(x_n,n)=(W_kx_n)e^{in\theta}
+$$
+
+$$
+g(x_m,x_n,m-n)=Re[(W_qx_m)(W_kx_n)^*e^{i(m-n)\theta}]
+$$
+
+证明如下：
+$$
+\text{Attention Score} = Re\left( f_q(x_m, m) \times f_k(x_n, n)^* \right)
+$$
+
+$$
+f_q(x_m, m) = (W_q x_m) e^{i m \theta}
+$$
+
+$$
+f_k(x_n, n)^* = \left((W_k x_n) e^{i n \theta}\right)^* = (W_k x_n)^* e^{-i n \theta}
+$$
+
+$$
+f_q(x_m, m) \times f_k(x_n, n)^* = (W_q x_m) (W_k x_n)^* e^{i m \theta} e^{-i n \theta}
+= (W_q x_m) (W_k x_n)^* e^{i (m-n)\theta}
+$$
+
+$$
+e^{im\theta}=\cos{(m\theta)}+i\sin(m\theta)
+$$
+
+$$
+e^{in\theta}=\cos{(n\theta)}+i\sin(n\theta)
+$$
+
+
+
+记：
+$$
+W_qx_m = \begin{pmatrix} q^{(1)} \\ q^{(2)} \end{pmatrix} =q_m
+\quad,\quad
+W_kx_n = \begin{pmatrix} k^{(1)} \\ k^{(2)} \end{pmatrix}=k_n
+$$
+
+$$
+f_q(x_m,m) =
+\begin{pmatrix}
+\cos(m\theta) & -\sin(m\theta) \\
+\sin(m\theta) & \cos(m\theta)
+\end{pmatrix}
+\begin{pmatrix}
+q^{(1)} \\ q^{(2)}
+\end{pmatrix}
+$$
+
+因为二维向量也可以写成复数形式，所以：
+$$
+f_q(x_m,m) =(W_qx_m)e^{im\theta}\\=q_me^{im\theta} \\
+= (q_m^1+iq_m^2)*(cos(m\theta)+isin(m\theta))\\
+= (q_m^1cos(m\theta)-q_m^2sin(m\theta))+i(q_m^2cos(m\theta)+q_m^1sin(m\theta))\\
+= [q_m^1cos(m\theta)-q_m^2sin(m\theta),q_m^2cos(m\theta)+q_m^1sin(m\theta)]\\
+=\begin{pmatrix}
+\cos(m\theta) & -\sin(m\theta) \\
+\sin(m\theta) & \cos(m\theta)
+\end{pmatrix}
+\begin{pmatrix}
+q^{1} \\ q^{2}
+\end{pmatrix}\quad \text{本行中的所有上标1和2，代表的都是index，并非平方}
+$$
+
+$$
+g(x_m, x_n, m-n) = \text{Re} \left[ (W_q x_m)(W_k x_n)^* e^{i(m-n)\theta} \right]\\
+= \text{Re}\left[ (q_m^{(1)} + i q_m^{(2)})(k_n^{(1)} - i k_n^{(2)})(\cos((m-n)\theta) + i\sin((m-n)\theta)) \right]\\
+= \text{Re}\left[ (q_m^{(1)} k_n^{(1)} + q_m^{(2)} k_n^{(2)}) \cos((m-n)\theta) 
+- (q_m^{(2)} k_n^{(1)} - q_m^{(1)} k_n^{(2)}) \sin((m-n)\theta) + i(\cdots) \right]\\
+= (q_m^{(1)} k_n^{(1)} + q_m^{(2)} k_n^{(2)}) \cos((m-n)\theta) 
+- (q_m^{(2)} k_n^{(1)} - q_m^{(1)} k_n^{(2)}) \sin((m-n)\theta)
+$$
+
+$$
+\langle f_q(x_m, m), f_k(x_n, n) \rangle
+=
+\left(
+\begin{pmatrix}
+\cos(m\theta) & -\sin(m\theta) \\
+\sin(m\theta) & \cos(m\theta)
+\end{pmatrix}
+\begin{pmatrix}
+q_m^{(1)} \\
+q_m^{(2)}
+\end{pmatrix}
+\right)^T
+\left(
+\begin{pmatrix}
+\cos(n\theta) & -\sin(n\theta) \\
+\sin(n\theta) & \cos(n\theta)
+\end{pmatrix}
+\begin{pmatrix}
+k_n^{(1)} \\
+k_n^{(2)}
+\end{pmatrix}
+\right)\\
+=
+\begin{pmatrix}
+q_m^{(1)} & q_m^{(2)}
+\end{pmatrix}
+\begin{pmatrix}
+\cos(m\theta) & \sin(m\theta) \\
+-\sin(m\theta) & \cos(m\theta)
+\end{pmatrix}
+\begin{pmatrix}
+\cos(n\theta) & -\sin(n\theta) \\
+\sin(n\theta) & \cos(n\theta)
+\end{pmatrix}
+\begin{pmatrix}
+k_n^{(1)} \\
+k_n^{(2)}
+\end{pmatrix}\\
+=
+\begin{pmatrix}
+q_m^{(1)} & q_m^{(2)}
+\end{pmatrix}
+\begin{pmatrix}
+\cos((m-n)\theta) & -\sin((m-n)\theta) \\
+\sin((m-n)\theta) & \cos((m-n)\theta)
+\end{pmatrix}
+\begin{pmatrix}
+k_n^{(1)} \\
+k_n^{(2)}
+\end{pmatrix}
+$$
+
+其中$\theta_{i}=10000^{-2i/d}$
+
+### 3.2代码
+
+```python3
+import torch
+import math
+
+def build_rope_cache(d_model, seq_len, device=None):
+    """预计算所有位置和维度对应的 cos/sin 矩阵"""
+    inv_freq = 1.0 / (10000 ** (torch.arange(0, d_model, 2) / d_model))
+    positions = torch.arange(seq_len, device=device).unsqueeze(1)  # [L,1]
+    angles = positions * inv_freq.unsqueeze(0)  # [L, d_model/2]
+    cos = torch.cos(angles)  # [L, d_model/2]
+    sin = torch.sin(angles)  # [L, d_model/2]
+    return cos, sin
+
+def apply_rope(x, cos, sin):
+    """对 x: [batch, seq_len, d_model] 应用 RoPE"""
+    x1 = x[..., ::2]  # even dims
+    x2 = x[..., 1::2] # odd dims
+    x_even = x1 * cos - x2 * sin
+    x_odd  = x1 * sin + x2 * cos
+    # 重新 interleave
+    x_rot = torch.stack([x_even, x_odd], dim=-1).reshape_as(x)
+    return x_rot
+
+def rope_attention(q, k, v, cos, sin):
+    """
+    基于 RoPE（Rotary Positional Encoding）的自注意力计算
+    q, k, v: [batch, seq_len, d_model]
+    cos, sin: 对应的正余弦值
+    """
+    # 应用 RoPE 旋转
+    q_rot = apply_rope(q, cos, sin)
+    k_rot = apply_rope(k, cos, sin)
+
+    # 计算注意力分数
+    attn_scores = torch.matmul(q_rot, k_rot.transpose(-2, -1)) / math.sqrt(q.size(-1))
+
+    # 使用 softmax 计算注意力权重
+    attn_weights = torch.nn.functional.softmax(attn_scores, dim=-1)
+
+    # 计算最终输出
+    output = torch.matmul(attn_weights, v)
+
+    return output, attn_weights
+
+# 使用示例
+batch_size = 2
+seq_len = 10
+d_model = 8
+
+# 随机生成 q, k, v（模拟输入数据）
+q = torch.randn(batch_size, seq_len, d_model)
+k = torch.randn(batch_size, seq_len, d_model)
+v = torch.randn(batch_size, seq_len, d_model)
+
+# 计算位置编码（cos, sin）
+cos, sin = build_rope_cache(d_model, seq_len)
+
+# 计算基于 RoPE 的自注意力
+output, attn_weights = rope_attention(q, k, v, cos, sin)
+
+print("Output:", output)
+print("Attention Weights:", attn_weights)
+```
+
